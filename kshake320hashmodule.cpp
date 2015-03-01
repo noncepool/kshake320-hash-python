@@ -7,8 +7,10 @@
 #include <openssl/sha.h>
 #include "keccak/sha3.h"
 
-#define SHAKE320_L  320  // Length in bits
-#define KPROOF_OF_WORK_SZ  (SHAKE320_R / 8 * 546)  // KryptoHash Proof of Work Size in bits. It must be a multiple of Keccak Rate.
+#define SHAKE320_L         (320)  // Length in bits
+#define KPOW_MUL           (546)  // How many Keccak blocks the PoW contains
+#define KRATE              (SHAKE320_R / 8)  // Keccak rate in bytes
+#define KPROOF_OF_WORK_SZ  (KRATE * KPOW_MUL)  // KryptoHash PoW Size in bytes. It must be a multiple of Keccak Rate.
 
 template<typename T1>
 inline uint320 KryptoHash(const T1 pbegin, const T1 pend)
@@ -18,6 +20,29 @@ inline uint320 KryptoHash(const T1 pbegin, const T1 pend)
     SHAKE320((pbegin == pend ? pblank : (unsigned char*)&pbegin[0]), (pend - pbegin) * sizeof(pbegin[0]) * 8, scratchpad, sizeof(scratchpad));
     uint320 hash;
     SHAKE320(scratchpad, sizeof(scratchpad) * 8, (unsigned char*)&hash, SHAKE320_L / 8);
+    return hash;
+}
+
+template<typename T1>
+inline uint320 KSHAKE320v2(const T1 pbegin, const T1 pend)
+{
+    static unsigned char pblank[1] = { 0 };
+    unsigned char scratchpad1[KPROOF_OF_WORK_SZ];
+    unsigned char scratchpad2[KPROOF_OF_WORK_SZ];
+    SHAKE320((pbegin == pend ? pblank : (unsigned char*)&pbegin[0]), (pend - pbegin) * sizeof(pbegin[0]) * 8, scratchpad1, sizeof(scratchpad1));
+
+    // Swap blocks in chunks of KRATE size
+    unsigned char *p1 = scratchpad1 + KPROOF_OF_WORK_SZ;
+    unsigned char *p2 = scratchpad2;
+    for (int i = 0; i < KPOW_MUL; i++)
+    {
+        p1 -= KRATE;
+        memcpy(p2, p1, KRATE);
+        p2 += KRATE;
+    }
+
+    uint320 hash;
+    SHAKE320(scratchpad2, sizeof(scratchpad2) * 8, (unsigned char*)&hash, SHAKE320_L / 8);
     return hash;
 }
 
@@ -43,7 +68,15 @@ inline uint256 Hash256(const T1 pbegin, const T1 pend)
 
 static void KSHAKE320POW(const char *input, char *output)
 {
-    uint320 hash = KryptoHash(input, input + 120);
+    uint320 hash;
+    int version = *((int *)input);
+
+    if (version <= 1) {
+        hash = KryptoHash(input, input + 120);
+    }
+    else {
+        hash = KSHAKE320v2(input, input + 120);
+    }
     memcpy(output, &hash, 40);
 }
 
